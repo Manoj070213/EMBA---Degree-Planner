@@ -1,0 +1,12 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/aibizproject/degree-planner-service'
+      - '-f'
+      - 'Dockerfile_backend'
+      - '.'
+
+images:
+  - 'gcr.io/aibizproject/degree-planner-service'

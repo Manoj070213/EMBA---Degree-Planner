@@ -1,0 +1,13 @@
+# cloudbuild-ui.yaml  – build the Streamlit UI using Dockerfile_streamlit
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/aibizproject/degree-planner-ui'
+      - '-f'
+      - 'Dockerfile_streamlit'
+      - '.'
+
+images:
+  - 'gcr.io/aibizproject/degree-planner-ui'
