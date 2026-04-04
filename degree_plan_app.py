@@ -28,6 +28,8 @@ from google.cloud.dialogflowcx_v3.types import session as cx_session
 
 # ---------- Page config & global styles ----------
 
+
+
 st.set_page_config(
     page_title="OBCC Degree Planner",
     layout="wide",
@@ -36,6 +38,9 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+
+    
+
     .stApp {
         background-color: #ffffff;
         color: #111111;
@@ -60,9 +65,57 @@ st.markdown(
         font-weight: 600;
     }
     .page-intro {
-        margin-top: 1.3rem;
-        margin-bottom: 0.4rem;
+        /* margin-top: 1.3rem;
+        margin-bottom: 0.4rem; */
     }
+
+    .main-page-title{
+    margin-bottom: 0.2rem;
+    color: #111111;
+}
+
+.section-subheader {
+    color: #111111 !important;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.custom-info-box {
+    background-color: #f5f5f5;
+    color: #111111;
+    border-left: 4px solid #F36F21;
+    padding: 0.75rem 1rem;
+    border-radius: 0.25rem;
+    margin-bottom: 1rem;
+}
+
+div[data-testid="stTextInput"] label {
+    color: #111111 !important;
+}
+
+.custom-caption {
+    color: #111111;
+    font-size: 14px;
+    margin-top: 0.25rem;
+    margin-bottom: -1rem;
+}
+
+/* Sidebar slider min/max labels only */
+section[data-testid="stSidebar"] div[data-testid="stSlider"] div[data-testid="stTickBar"] > div {
+    color: #FAFAFA !important;
+}
+
+.st-emotion-cache-ch5dnh {
+    color: initial !important;
+}
+
+.section-divider {
+    border-top: 1px solid #d9d9d9;
+    margin: 1.5rem 0;
+}
+
+/* Chintan - CSS Changes end */
+
     .info-banner {
         background-color: #f7f7f7;
         border-left: 4px solid #F36F21;
@@ -127,7 +180,7 @@ st.markdown(
 st.markdown(
     """
     <div class="page-intro">
-      <h2 style="margin-bottom: 0.2rem;">OBCC Degree Planner</h2>
+      <h2 class="main-page-title">OBCC Degree Planner</h2>
     </div>
     <div class="info-banner">
       <strong>How it works:</strong>
@@ -358,7 +411,7 @@ def call_planner_via_agent(payload: dict) -> list[dict]:
 # ------------------ BigQuery config for chatbot ------------------ #
 
 PROJECT_ID = "obcc-degree-planner-489404"
-DATASET = "obcc-degree-planner-489404.degree_planner_config_data"
+DATASET = "degree_planner_config_data"
 bq_client = bigquery.Client(project=PROJECT_ID)
 
 
@@ -382,7 +435,7 @@ def load_catalog():
           CourseID,
           TermCode,
           PartOfTermCode
-        FROM `{PROJECT_ID}.{DATASET}.courseoffering`
+        FROM `{PROJECT_ID}.{DATASET}.v_course_offering`
     """
 
     df_courses = bq_client.query(courses_query).to_dataframe()
@@ -513,13 +566,25 @@ generate = st.sidebar.button("Generate plan", type="primary")
 
 # ------------------ main layout ------------------ #
 
-st.subheader("Generated degree plan")
+# st.subheader("Generated degree plan")
+st.markdown(
+    '<h3 class="section-subheader">Generated degree plan</h3>',
+    unsafe_allow_html=True,
+)
 
 df = None
 cert_codes: list[str] = []
 
 if not generate:
-    st.info("Configure your plan options in the sidebar and click **Generate plan**.")
+    # st.info("Configure your plan options in the sidebar and click **Generate plan**.")
+    st.markdown(
+    """
+    <div class="custom-info-box">
+        Configure your plan options in the sidebar and click <strong>Generate plan</strong>.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 else:
     # Map UI labels -> API codes
     program_code = PROGRAM_CODES[program_label]
@@ -536,7 +601,7 @@ else:
     }
 
     try:
-        with st.spinner("Calling OBCC planning agent..."):
+        with st.spinner("Generating degree plan..."):
             rows = call_planner_via_agent(payload)
 
         if not rows:
@@ -587,7 +652,15 @@ else:
             f"{e}"
         )
 
-st.caption("Tuition estimates are approximate and subject to change.")
+# st.caption("Tuition estimates are approximate and subject to change.")
+st.markdown(
+    """
+    <div class="custom-caption">
+        Tuition estimates are approximate and subject to change.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ------------- PDF download ------------- #
 
@@ -633,11 +706,13 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
     pdf.add_page()
 
     # ----- Title -----
-    pdf.set_font("Arial", "B", 18)
-    pdf.cell(0, 10, "OBCC Degree Plan", ln=1)
+    pdf.set_font("Helvetica", "B", 18)
+    from fpdf.enums import XPos, YPos
+    pdf.cell(0, 10, "OBCC Degree Plan", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # pdf.cell(0, 10, "OBCC Degree Plan", ln=1)
 
     # ----- Program info block -----
-    pdf.set_font("Arial", "", 11)
+    pdf.set_font("Helvetica", "", 11)
     pdf.multi_cell(0, 5, header_text)
     pdf.ln(3)
 
@@ -650,7 +725,7 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
 
     # Helper to draw table header for each term section
     def draw_table_header():
-        pdf.set_font("Arial", "B", 10)
+        pdf.set_font("Helvetica", "B", 10)
         pdf.set_fill_color(230, 230, 230)  # light gray
         pdf.cell(col_course, 7, "Course", border=1, align="L", fill=True)
         pdf.cell(col_title, 7, "Course Title", border=1, align="L", fill=True)
@@ -670,7 +745,7 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
 
         # Term header bar, e.g. "Spring 2026"
         term_label = _format_term_label(term_code)
-        pdf.set_font("Arial", "B", 12)
+        pdf.set_font("Helvetica", "B", 12)
         pdf.set_fill_color(255, 230, 150)  # soft yellow
         pdf.cell(0, 8, term_label, ln=1, fill=True)
 
@@ -678,7 +753,7 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
         draw_table_header()
 
         # Table rows with wrapped titles
-        pdf.set_font("Arial", "", 10)
+        pdf.set_font("Helvetica", "", 10)
         line_height = 5  # mm
 
         for _, row in group.iterrows():
@@ -694,7 +769,8 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
             x0, y0 = pdf.get_x(), pdf.get_y()
 
             # How many lines the title will need
-            title_lines = pdf.multi_cell(col_title, line_height, title, split_only=True)
+            #title_lines = pdf.multi_cell(col_title, line_height, title, split_only=True)
+            title_lines = pdf.multi_cell(col_title, line_height, title, dry_run=True, output="LINES")
             row_height = line_height * len(title_lines)
 
             # Course column
@@ -719,7 +795,7 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
         pdf.ln(3)
 
     # Totals bar
-    pdf.set_font("Arial", "B", 11)
+    pdf.set_font("Helvetica", "B", 11)
     pdf.set_fill_color(255, 230, 150)
     pdf.cell(col_course + col_title, 8, "TOTALS", border=1, align="R", fill=True)
     pdf.cell(col_credits, 8, str(total_credits), border=1, align="C", fill=True)
@@ -727,7 +803,8 @@ def make_pdf(plan_df: pd.DataFrame, header_text: str) -> bytes:
     pdf.cell(col_tuition, 8, f"${total_tuition_val:,.0f}", border=1, align="R", fill=True)
     pdf.ln()
 
-    raw = pdf.output(dest="S")
+    #raw = pdf.output(dest="S")
+    raw = pdf.output()
     if isinstance(raw, (bytes, bytearray)):
         return bytes(raw)
     return raw.encode("latin1")
@@ -760,8 +837,15 @@ if df is not None:
 
 # ------------- OBCC Course Assistant (simple Q&A at bottom) ------------- #
 
-st.markdown("---")
-st.subheader("Ask the OBCC Course Assistant")
+# st.markdown("---")
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
+# st.subheader("Ask the OBCC Course Assistant")
+st.markdown(
+    '<h3 class="section-subheader">Ask the OBCC Course Assistant</h3>',
+    unsafe_allow_html=True,
+)
 
 st.write(
     "Ask about a specific course number and I'll tell you the name, "
@@ -770,11 +854,12 @@ st.write(
 )
 
 # Load catalog once (cached)
-df_courses, df_offerings = load_catalog()
+#df_courses, df_offerings = load_catalog()
 
 question = st.text_input("Type your question about a course...")
 
 if question:
+    df_courses, df_offerings = load_catalog()
     answer = answer_course_question(question, df_courses, df_offerings)
     st.markdown("#### Answer")
     st.markdown(answer)
