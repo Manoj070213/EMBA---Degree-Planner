@@ -27,7 +27,7 @@ import pandas as pd
 
 # In Cloud Run, GOOGLE_CLOUD_PROJECT is set automatically.
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "obcc-degree-planner-489404")
-DATASET = "degree_planner_config_data"
+DATASET = "obcc-degree-planner-489404.degree_planner_config_data"
 
 
 def get_bq_client() -> bigquery.Client:
@@ -293,7 +293,7 @@ def get_prereqs(program_code: str) -> pd.DataFrame:
 
     query = f"""
       SELECT *
-      FROM `{DATASET}.v_course_prereq`
+      FROM `{DATASET}.courseprerequisite`
       WHERE ProgramID = @program_id
         AND IsSuggested = @is_suggested
     """
@@ -331,7 +331,7 @@ def get_term_preferences(program_code: str) -> pd.DataFrame:
 
     query = f"""
       SELECT CourseID, TermCode
-      FROM `{DATASET}.v_course_term_pref`
+      FROM `{DATASET}.v_course_term_preference`
       WHERE ProgramCode = @program_code
     """
     job = client.query(

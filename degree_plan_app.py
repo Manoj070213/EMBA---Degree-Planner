@@ -358,7 +358,7 @@ def call_planner_via_agent(payload: dict) -> list[dict]:
 # ------------------ BigQuery config for chatbot ------------------ #
 
 PROJECT_ID = "obcc-degree-planner-489404"
-DATASET = "degree_planner_config_data"
+DATASET = "obcc-degree-planner-489404.degree_planner_config_data"
 bq_client = bigquery.Client(project=PROJECT_ID)
 
 
@@ -382,7 +382,7 @@ def load_catalog():
           CourseID,
           TermCode,
           PartOfTermCode
-        FROM `{PROJECT_ID}.{DATASET}.v_course_offering`
+        FROM `{PROJECT_ID}.{DATASET}.courseoffering`
     """
 
     df_courses = bq_client.query(courses_query).to_dataframe()
