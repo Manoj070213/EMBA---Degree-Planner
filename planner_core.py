@@ -1,18 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: Python 3 (ipykernel) (Local)
-#     language: python
-#     name: conda-base-py
-# ---
-
-# %%
 # planner_core.py
 
 import os
@@ -25,16 +10,11 @@ import pandas as pd
 # BigQuery client & config
 # -------------------------
 
-# In Cloud Run, GOOGLE_CLOUD_PROJECT is set automatically.
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "obcc-degree-planner-489404")
 DATASET = "obcc-degree-planner-489404.degree_planner_config_data"
 
 
 def get_bq_client() -> bigquery.Client:
-    """
-    Create a BigQuery client for the current project.
-    Called inside functions so imports don't crash in Cloud Run.
-    """
     return bigquery.Client(project=PROJECT_ID)
 
 
@@ -45,7 +25,8 @@ def get_bq_client() -> bigquery.Client:
 PART_OF_TERM_LABELS = {
     "1st8wk": "1st 8 weeks",
     "2nd8wk": "2nd 8 weeks",
-    "Full16wk": "Full Term",  # change text if you want "Full 11 weeks"
+    "Full16wk": "Full Term",
+    "SummerFullTerm": "Summer 11 weeks",
 }
 
 TUITION_PER_CREDIT = 900
@@ -55,70 +36,96 @@ TUITION_PER_CREDIT = 900
 # Certificate code helper
 # -------------------------
 
-# Map multiple UI labels / text values → canonical short codes
 CERT_ALIAS_MAP = {
-    # Organizational Consulting
     "OC": "OC",
     "Organizational Consulting": "OC",
-
-    # Transformational Leadership
     "TL": "TL",
     "Transformational Leadership": "TL",
-
-    # Strategic Human Resources
     "SHR": "SHR",
     "Strategic Human Resources": "SHR",
-
-    # Coaching
     "COACH": "COACH",
     "Coaching": "COACH",
 }
 
 
 def normalize_certs(certs: List[str]) -> set:
-    """
-    Normalize certificate names coming from the UI / API payload.
-
-    Accepts both short codes ("OC", "TL", "SHR", "COACH") and
-    full labels ("Organizational Consulting", etc.) and returns
-    a set of canonical codes.
-    """
     return {CERT_ALIAS_MAP.get(c, c) for c in certs or []}
+
+
+# -------------------------
+# CourseCategory → cert code mapping
+# -------------------------
+
+CATEGORY_TO_CERT = {
+    "OC": "OC",
+    "TL": "TL",
+    "Core+TL": "TL",
+    "Coaching": "COACH",
+    # SHR has no dedicated category; uses IsSHR flag
+}
 
 
 # -------------------------
 # 1. Data access helpers
 # -------------------------
 
+def get_program_config(program_code: str) -> Dict[str, Any]:
+    """
+    Read program-level configuration from the Program table.
+    Returns TotalCreditHours, MaxCoursesPerSession, etc.
+    """
+    client = get_bq_client()
+    query = f"""
+      SELECT
+        ProgramID,
+        ProgramCode,
+        ProgramName,
+        TotalCreditHours,
+        TotalSemesters,
+        MaxCoursesPerSession,
+        CoursesPerSummerSemester,
+        CoursesPerFallSpringSemester
+      FROM `{DATASET}.program`
+      WHERE ProgramCode = @program_code
+    """
+    job = client.query(
+        query,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("program_code", "STRING", program_code),
+            ]
+        ),
+    )
+    df = job.to_dataframe()
+    if df.empty:
+        raise ValueError(f"No program config found for {program_code}")
+    row = df.iloc[0]
+    return {
+        "program_id": int(row["ProgramID"]),
+        "total_credit_hours": int(row["TotalCreditHours"]),
+        "total_semesters": int(row["TotalSemesters"]),
+        "max_courses_per_session": int(row["MaxCoursesPerSession"]),
+        "courses_per_summer": int(row["CoursesPerSummerSemester"]),
+    }
+
+
 def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
     """
-    certs only matter for:
-      - MSLOD (OC / SHR / TL / Coaching)
-      - HOL-EMBA when student wants to add cert-style courses on top of EMBA.
+    Fetch courses for a program using the CourseCategory column and
+    Is16WeekCourse flag from the updated views.
 
-    MSLOD:
-      - Cores: IsCoreRecommended = 1 OR IsCore = 1
-      - MSLOD electives: IsSupplementalElective = 1
-      - Plus cert-flagged courses (IsOC / IsSHR / IsTL / IsCoaching)
-      - CorePriority:
-          0 = chosen cert courses
-          1 = cores
-          2 = other electives
+    CourseCategory values:
+      Core, Core+TL, TL, Elective, SupplementalElective, OC, Coaching,
+      CoreRecommended, Other
 
-    HOL-EMBA:
-      - Always include:
-          * IsCore = 1  (EMBA cores)
-          * IsElective = 1 (EMBA electives)
-      - If certs requested, push those cert-flagged courses earlier:
-          * CorePriority:
-              0 = chosen cert courses
-              1 = cores
-              2 = other electives
-              3 = everything else (rare)
+    CorePriority:
+      0 = chosen cert courses
+      1 = cores (Core, CoreRecommended, Core+TL when TL chosen)
+      2 = electives (Elective, SupplementalElective)
+      3 = everything else
     """
     client = get_bq_client()
 
-    # 🔴 Normalize certificate names first
     norm_certs = normalize_certs(certs)
     want_oc = "OC" in norm_certs
     want_shr = "SHR" in norm_certs
@@ -138,6 +145,8 @@ def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
           CourseTitle,
           DefaultCreditHours,
           ProgramCode,
+          CourseCategory,
+          Is16WeekCourse,
           IsCoreRecommended,
           IsSupplementalElective,
           IsCore,
@@ -148,18 +157,21 @@ def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
           OCPreferredOrder,
           SHRPreferredOrder,
 
-          -- Priority: chosen certificate courses first, then cores, then electives
           CASE
             WHEN (
-                  (want_oc       AND IsOC       = 1) OR
-                  (want_shr      AND IsSHR      = 1) OR
-                  (want_tl       AND IsTL       = 1) OR
-                  (want_coaching AND IsCoaching = 1)
+                  (want_oc       AND (CourseCategory = 'OC'))
+               OR (want_shr      AND IsSHR = 1)
+               OR (want_tl       AND CourseCategory IN ('TL', 'Core+TL'))
+               OR (want_coaching AND CourseCategory = 'Coaching')
                  )
-              THEN 0                    -- chosen cert courses
-            WHEN IsCoreRecommended = 1 OR IsCore = 1
-              THEN 1                    -- any kind of core
-            ELSE 2                      -- electives / others
+              THEN 0
+            WHEN CourseCategory IN ('Core', 'CoreRecommended')
+              THEN 1
+            WHEN CourseCategory IN ('Core+TL')
+              THEN 1
+            WHEN CourseCategory IN ('SupplementalElective', 'Elective')
+              THEN 2
+            ELSE 3
           END AS CorePriority,
 
           CASE
@@ -173,16 +185,12 @@ def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
         FROM `{DATASET}.v_course_program`
         WHERE ProgramCode = @program_code
           AND (
-                -- MSLOD cores / electives are always allowed
-                IsCoreRecommended = 1
-             OR IsCore             = 1
-             OR IsSupplementalElective = 1
-
-             -- PLUS: cert courses for chosen certificates
-             OR (want_oc       AND IsOC       = 1)
-             OR (want_shr      AND IsSHR      = 1)
-             OR (want_tl       AND IsTL       = 1)
-             OR (want_coaching AND IsCoaching = 1)
+                CourseCategory IN ('Core', 'CoreRecommended', 'Core+TL',
+                                   'SupplementalElective')
+             OR (want_oc       AND CourseCategory = 'OC')
+             OR (want_shr      AND IsSHR = 1)
+             OR (want_tl       AND CourseCategory IN ('TL', 'Core+TL'))
+             OR (want_coaching AND CourseCategory = 'Coaching')
           );
         """
 
@@ -207,6 +215,8 @@ def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
           CourseTitle,
           DefaultCreditHours,
           ProgramCode,
+          CourseCategory,
+          Is16WeekCourse,
           IsCore,
           IsElective,
           IsCoreRecommended,
@@ -220,17 +230,19 @@ def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
 
           CASE
             WHEN (
-                  (@want_oc       AND IsOC       = 1) OR
-                  (@want_shr      AND IsSHR      = 1) OR
-                  (@want_tl       AND IsTL       = 1) OR
-                  (@want_coaching AND IsCoaching = 1)
+                  (@want_oc       AND (CourseCategory = 'OC' OR IsOC = 1))
+               OR (@want_shr      AND IsSHR = 1)
+               OR (@want_tl       AND CourseCategory IN ('TL', 'Core+TL'))
+               OR (@want_coaching AND CourseCategory = 'Coaching')
                  )
-              THEN 0                    -- chosen cert courses first
-            WHEN IsCore = 1
-              THEN 1                    -- EMBA cores
-            WHEN IsElective = 1
-              THEN 2                    -- other EMBA electives
-            ELSE 3                      -- anything else (should be rare)
+              THEN 0
+            WHEN CourseCategory = 'Core'
+              THEN 1
+            WHEN CourseCategory IN ('Core+TL')
+              THEN 1
+            WHEN CourseCategory IN ('Elective', 'SupplementalElective')
+              THEN 2
+            ELSE 3
           END AS CorePriority,
 
           CASE
@@ -244,12 +256,11 @@ def get_program_courses(program_code: str, certs: List[str]) -> pd.DataFrame:
         FROM `{DATASET}.v_course_program`
         WHERE ProgramCode = @program_code
           AND (
-                IsCore = 1
-             OR IsElective = 1
-             OR (@want_oc       AND IsOC       = 1)
-             OR (@want_shr      AND IsSHR      = 1)
-             OR (@want_tl       AND IsTL       = 1)
-             OR (@want_coaching AND IsCoaching = 1)
+                CourseCategory IN ('Core', 'Core+TL', 'Elective')
+             OR (@want_oc       AND (CourseCategory = 'OC' OR IsOC = 1))
+             OR (@want_shr      AND IsSHR = 1)
+             OR (@want_tl       AND CourseCategory IN ('TL', 'Core+TL'))
+             OR (@want_coaching AND CourseCategory = 'Coaching')
           );
         """
 
@@ -310,6 +321,11 @@ def get_prereqs(program_code: str) -> pd.DataFrame:
 
 
 def get_offerings(program_code: str) -> pd.DataFrame:
+    """
+    Fetch course offerings.  The updated v_course_offering view now exposes
+    SessionLabel (1st8wk | 2nd8wk | Full16wk | SummerFullTerm) and
+    TermSeason (Spring | Summer | Fall) alongside the legacy columns.
+    """
     client = get_bq_client()
 
     query = f"""
@@ -320,7 +336,9 @@ def get_offerings(program_code: str) -> pd.DataFrame:
     job = client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("program_code", "STRING", program_code)]
+            query_parameters=[
+                bigquery.ScalarQueryParameter("program_code", "STRING", program_code)
+            ]
         ),
     )
     return job.to_dataframe()
@@ -337,7 +355,9 @@ def get_term_preferences(program_code: str) -> pd.DataFrame:
     job = client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("program_code", "STRING", program_code)]
+            query_parameters=[
+                bigquery.ScalarQueryParameter("program_code", "STRING", program_code)
+            ]
         ),
     )
     return job.to_dataframe()
@@ -383,6 +403,13 @@ def compact_plan_terms(
 ) -> List[Dict[str, Any]]:
     if not plan_terms:
         return plan_terms
+
+    # Determine the offering-column name (supports both legacy and new views)
+    slot_col = (
+        "SessionLabel"
+        if "SessionLabel" in offerings.columns
+        else "PartOfTermCode"
+    )
 
     changed = True
 
@@ -468,17 +495,36 @@ def run_planner(
     start_term_code: str,
     certs: List[str],
     max_terms: int = 20,
-    target_credits: int = 36,
+    target_credits: int | None = None,
     half_time: bool = False,
 ) -> Dict[str, Any]:
-    max_courses_per_term = 1 if half_time else 2
+    # ---- pull program-level config from BQ ----
+    prog_cfg = get_program_config(program_code)
+
+    if target_credits is None:
+        target_credits = prog_cfg["total_credit_hours"]
+
+    max_courses_per_session = prog_cfg["max_courses_per_session"]  # 2
+    max_courses_per_term = 1 if half_time else (max_courses_per_session * 2)
+    # Fall/Spring allow up to 2 sessions × max_courses_per_session,
+    # but capped at 3 per the data ("2 or 3").  Summer = max 2.
+    max_fall_spring = 3 if not half_time else 1
+    max_summer = prog_cfg["courses_per_summer"] if not half_time else 1
 
     courses = get_program_courses(program_code, certs)
     prereqs = get_prereqs(program_code)
     offerings = get_offerings(program_code)
     term_prefs_df = get_term_preferences(program_code)
 
+    # Determine the slot column name (supports legacy + new views)
+    slot_col = (
+        "SessionLabel"
+        if "SessionLabel" in offerings.columns
+        else "PartOfTermCode"
+    )
+
     # Manual prereq override: FIN 6301 requires OPRE 6301 for HOL-EMBA
+    # (not yet encoded in the prerequisite table)
     if program_code == "HOL-EMBA":
         try:
             fin_id = int(
@@ -525,7 +571,7 @@ def run_planner(
     plan_terms: List[Dict[str, Any]] = []
     total_credits_so_far = 0
 
-    part_order = {"1st8wk": 0, "2nd8wk": 1, "Full16wk": 2}
+    part_order = {"1st8wk": 0, "2nd8wk": 1, "Full16wk": 2, "SummerFullTerm": 2}
 
     for full_term in term_seq:
         if total_credits_so_far >= target_credits:
@@ -533,6 +579,9 @@ def run_planner(
 
         season = full_term[:2]
         year = int(full_term[2:])
+
+        # Per-season course cap
+        season_max = max_summer if season == "SU" else max_fall_spring
 
         term_courses: List[Dict[str, Any]] = []
         term_credits = 0
@@ -543,7 +592,7 @@ def run_planner(
         for _, row in courses.iterrows():
             if total_credits_so_far >= target_credits:
                 break
-            if term_course_count >= max_courses_per_term:
+            if term_course_count >= season_max:
                 break
 
             cid = int(row["CourseID"])
@@ -551,6 +600,7 @@ def run_planner(
                 continue
 
             course_number = row["CourseNumber"]
+            is_16wk = int(row.get("Is16WeekCourse", 0)) == 1
 
             prefs = term_pref_map.get(cid)
             if year == start_year and prefs and season not in prefs:
@@ -575,32 +625,38 @@ def run_planner(
                 continue
 
             chosen_slot = None
-            slots = [str(s) for s in offered["PartOfTermCode"].dropna().unique()]
+            slots = [str(s) for s in offered[slot_col].dropna().unique()]
 
-            # Special rule: for HOL-EMBA, force FIN 6301 & OPRE 6301 to Full16wk
-            if program_code == "HOL-EMBA" and course_number in ("FIN 6301", "OPRE 6301"):
+            # --- 16-week courses must go to Full16wk (data-driven) ---
+            if is_16wk and season in ("SP", "FA"):
                 if "Full16wk" in slots:
                     chosen_slot = "Full16wk"
                 else:
                     continue
-            else:
-                if season in ("SP", "FA"):
-                    has_real_8wk = any(s in ("1st8wk", "2nd8wk") for s in slots)
 
-                    if has_real_8wk:
-                        for slot in slots:
-                            if slot in ("1st8wk", "2nd8wk") and slot not in used_8wk_slots:
-                                chosen_slot = slot
-                                break
-                    else:
-                        if "1st8wk" not in used_8wk_slots:
-                            chosen_slot = "1st8wk"
-                        elif "2nd8wk" not in used_8wk_slots:
-                            chosen_slot = "2nd8wk"
+            # --- Summer: use SummerFullTerm ---
+            elif season == "SU":
+                if "SummerFullTerm" in slots:
+                    chosen_slot = "SummerFullTerm"
                 else:
                     for slot in slots:
                         chosen_slot = slot
                         break
+
+            # --- Fall / Spring: prefer 8-week slots ---
+            elif season in ("SP", "FA"):
+                has_real_8wk = any(s in ("1st8wk", "2nd8wk") for s in slots)
+
+                if has_real_8wk:
+                    for slot in slots:
+                        if slot in ("1st8wk", "2nd8wk") and slot not in used_8wk_slots:
+                            chosen_slot = slot
+                            break
+                else:
+                    if "1st8wk" not in used_8wk_slots:
+                        chosen_slot = "1st8wk"
+                    elif "2nd8wk" not in used_8wk_slots:
+                        chosen_slot = "2nd8wk"
 
             if chosen_slot is None:
                 continue
@@ -637,7 +693,7 @@ def run_planner(
 
         plan_terms = compact_plan_terms(
             plan_terms=plan_terms,
-            max_courses_per_term=max_courses_per_term,
+            max_courses_per_term=season_max,
             offerings=offerings,
             prereqs=prereqs,
         )
@@ -724,5 +780,3 @@ def summarize_plan(plan: Dict[str, Any], label: str = "") -> None:
             for c in term["courses"]
         )
         print(f"  - {term_code}: {t_cred} credits -> {courses}")
-
-# %%
