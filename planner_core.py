@@ -1,5 +1,4 @@
-
-   # planner_core.py
+# planner_core.py
 
 import os
 from typing import List, Dict, Any
@@ -27,7 +26,7 @@ PART_OF_TERM_LABELS = {
     "1st8wk": "1st 8 weeks",
     "2nd8wk": "2nd 8 weeks",
     "Full16wk": "Full Term",
-    "SummerFullTerm": "Summer Full Term",
+    "SummerFullTerm": "Summer 11 weeks",
 }
 
 TUITION_PER_CREDIT = 900
@@ -781,3 +780,4 @@ def summarize_plan(plan: Dict[str, Any], label: str = "") -> None:
             for c in term["courses"]
         )
         print(f"  - {term_code}: {t_cred} credits -> {courses}")
+                   
