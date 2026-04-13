@@ -618,7 +618,9 @@ else:
                 f"Certificates: **{', '.join(cert_codes) if cert_codes else 'None'}**."
             )
 
-            st.dataframe(df, use_container_width=True)
+            df_display = df.copy()
+            df_display.index = range(1, len(df_display) + 1)
+            st.dataframe(df_display, use_container_width=True)
 
             total_hours = df["credits"].sum() if "credits" in df.columns else None
             total_tuition = df["tuition"].sum() if "tuition" in df.columns else None

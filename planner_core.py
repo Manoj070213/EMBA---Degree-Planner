@@ -639,9 +639,13 @@ def run_planner(
                 if "SummerFullTerm" in slots:
                     chosen_slot = "SummerFullTerm"
                 else:
-                    for slot in slots:
-                        chosen_slot = slot
-                        break
+                    # Summer: always prefer Full Term
+                    if "Full16wk" in slots:
+                        chosen_slot = "Full16wk"
+                    else:
+                        for slot in slots:
+                            chosen_slot = slot
+                            break
 
             # --- Fall / Spring: prefer 8-week slots ---
             elif season in ("SP", "FA"):
@@ -664,7 +668,11 @@ def run_planner(
             if season in ("SP", "FA") and chosen_slot in ("1st8wk", "2nd8wk"):
                 used_8wk_slots.add(chosen_slot)
 
-            label = PART_OF_TERM_LABELS.get(chosen_slot, chosen_slot)
+            # Summer courses always display as "Full Term" regardless of slot code in DB
+            if season == "SU":
+                label = "Full Term"
+            else:
+                label = PART_OF_TERM_LABELS.get(chosen_slot, chosen_slot)
 
             term_courses.append({
                 "course_id": cid,
